@@ -1,0 +1,28 @@
+syntax = "proto3" ;
+option go_package = "../pb";
+
+
+service pingService {
+    rpc pingServiceFunc (pingRequest) returns (pingReply) {}
+}
+
+message pingRequest {
+    string src_ip = 1;
+    string dst_ip = 2;
+    int32 interval =3;
+    int32 length = 4;
+    int32 id = 5 ;
+
+}
+
+message pingReply {
+    bool status =6;
+    int32 time = 7;
+    int32 send_ttl=8;
+    int32 received_ttl=9;
+
+}
+ 
+
+
+ 
