@@ -1,0 +1,30 @@
+syntax = "proto3";
+option go_package = "./pb" ;
+
+service PingService {
+    rpc PingFunc (pingRequestMessage) returns (stream pongReplyStream) {}
+} ;
+
+message pingRequestMessage {
+    bool start =1 ;
+    string dstIP = 2;
+    int64 count =3;
+    int64 interval =4 ;
+    int64 id = 5;
+}
+
+message pongReplyStream {
+    bool result = 6;
+    float time = 7;
+    int32 ttl = 8;
+    bool status = 9;
+    int64 id = 10 ;
+    string dstIP = 11;
+
+    int64 sent = 12;
+    int64 recv =13;
+    float loss =14;
+
+}
+
+
