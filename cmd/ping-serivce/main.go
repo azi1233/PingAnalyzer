@@ -1,85 +1,106 @@
 package main
 
 import (
-	"context"
 	"fmt"
-
-	//"os/exec"
-	"log"
 	"net"
+	"sync"
 	"time"
 
-	"google.golang.org/grpc"
-
 	pb "github.com/azi1233/PingAnalyzer/api/pb"
+	"google.golang.org/grpc"
 )
 
-type pingInfo struct {
-	SrcIP       string
-	DstIP       string
-	Interval    int
-	RequestTime time.Time
-	ch          *chan statStruct
+type PingInfo struct {
+	DstIP     string
+	Count     int64
+	Interval  int64
+	StartTime time.Time
+	EndTime   time.Time
+	ch        *chan streamResponse
+	chStop    *chan bool //stopping the pinger
+	stop      bool       //stopping the for loop
 }
 
-type server struct {
+type Server struct {
 	pb.PingServiceServer
-	store         (map[uint64]pingInfo)
-	NextID        uint64 //always increasing
-	lastID        uint64
-	UnallocatedID []uint64
+	DataSotre map[uint64]PingInfo
+	LastId    uint64
+	mu        *sync.Mutex
 }
 
-func (s *server) PingServiceFunc(c context.Context, req *pb.PingRequest) (*pb.PingReply, error) {
-	fmt.Println("//////////////")
+var wg *sync.WaitGroup
 
-	//if start request
-	tempPing := pingInfo{
-		SrcIP:       req.SrcIp,
-		DstIP:       req.DstIp,
-		Interval:    int(req.Interval),
-		RequestTime: time.Now(),
-	}
-	if len(s.UnallocatedID) != 0 {
+func (s *Server) PingFunc(msg *pb.PingRequestMessage, stream pb.PingService_PingFuncServer) error {
+	if msg.Start {
 
-		if s.NextID > s.UnallocatedID[0] {
-			//s.store[s.UnallocatedID[0]] = tempPing
-			s.lastID = s.UnallocatedID[0]
-			s.UnallocatedID = s.UnallocatedID[1:]
+		ch, chStop, err := MyPing(msg.DstIP, msg.Count)
+
+		if err != nil {
+			panic(fmt.Errorf("ping chanle dosen't return: %v\n", err))
+		}
+		temp := PingInfo{
+			DstIP:     msg.DstIP,
+			Count:     msg.Count,
+			Interval:  msg.Interval,
+			StartTime: time.Now(),
+			ch:        ch,
+			chStop:    chStop,
+		}
+		s.mu.Lock()
+		s.LastId++
+		id := s.LastId
+		s.DataSotre[s.LastId] = temp
+		s.mu.Unlock()
+		//go func(id uint64, info PingInfo) {
+		for {
+			msg := <-*s.DataSotre[id].ch
+			pong := &pb.PongReplyStream{
+				Result: false,
+				Time:   float32(msg.rtt.Milliseconds()),
+				Ttl:    int32(msg.ttl),
+				Status: msg.status,
+				Id:     int64(id),
+				DstIP:  s.DataSotre[id].DstIP,
+			}
+			if err := stream.Send(pong); err != nil {
+				// You need to handle this error later
+			}
+
+			if s.DataSotre[id].stop {
+				break
+			}
+		}
+		//	}(s.LastId-1,temp)
+	} else {
+		temp, ok := s.DataSotre[uint64(msg.Id)]
+		if !ok {
+			fmt.Printf("%d id not available\n", msg.Id)
 
 		} else {
-			//	s.store[s.NextID] = tempPing
-			s.lastID = s.NextID
-			s.NextID++
+			temp.stop = true
+			s.DataSotre[uint64(msg.Id)] = temp
+			*s.DataSotre[uint64(msg.Id)].chStop <- true
+			//wg.Add(1)
+			//	wg.Wait()//further analysis needed
+			s.mu.Lock()
+			delete(s.DataSotre, uint64(msg.Id))
+			s.mu.Unlock()
 		}
 
-	} else {
-		s.lastID = s.NextID
-		s.NextID++
 	}
-
-	tempCh := PingStart(tempPing)
-	tempPing.ch = tempCh
-	s.store[s.lastID] = tempPing
-
-	msg := <-*s.store[s.lastID].ch
-
-	return &pb.PingReply{Status: true, Time: int32(msg.sent), SendTtl: int32(msg.rec), ReceivedTtl: int32(msg.lossPercentage)}, nil
-
+	return nil
 }
 
 func main() {
-
 	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
-		log.Fatal("Couldn't generate listen config")
+		panic(fmt.Errorf("listener error: %v\n", err))
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterPingServiceServer(s, &server{NextID: 1, UnallocatedID: []uint64{}, store: make(map[uint64]pingInfo)})
-	err = s.Serve(listener)
-	if err != nil {
-		log.Fatalf("couldn't start setver because:%v\n", err)
-	}
+	pb.RegisterPingServiceServer(s, &Server{DataSotre: make(map[uint64]PingInfo), LastId: 0, mu: &sync.Mutex{}})
 
+	if err := s.Serve(listener); err != nil {
+		panic(fmt.Errorf("server start error: %v\n", err))
+	}
 }

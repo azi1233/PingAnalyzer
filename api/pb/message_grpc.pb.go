@@ -22,7 +22,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PingServiceClient interface {
-	PingServiceFunc(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingReply, error)
+	PingFunc(ctx context.Context, in *PingRequestMessage, opts ...grpc.CallOption) (PingService_PingFuncClient, error)
 }
 
 type pingServiceClient struct {
@@ -33,20 +33,43 @@ func NewPingServiceClient(cc grpc.ClientConnInterface) PingServiceClient {
 	return &pingServiceClient{cc}
 }
 
-func (c *pingServiceClient) PingServiceFunc(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingReply, error) {
-	out := new(PingReply)
-	err := c.cc.Invoke(ctx, "/pingService/pingServiceFunc", in, out, opts...)
+func (c *pingServiceClient) PingFunc(ctx context.Context, in *PingRequestMessage, opts ...grpc.CallOption) (PingService_PingFuncClient, error) {
+	stream, err := c.cc.NewStream(ctx, &PingService_ServiceDesc.Streams[0], "/PingService/PingFunc", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &pingServicePingFuncClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type PingService_PingFuncClient interface {
+	Recv() (*PongReplyStream, error)
+	grpc.ClientStream
+}
+
+type pingServicePingFuncClient struct {
+	grpc.ClientStream
+}
+
+func (x *pingServicePingFuncClient) Recv() (*PongReplyStream, error) {
+	m := new(PongReplyStream)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // PingServiceServer is the server API for PingService service.
 // All implementations must embed UnimplementedPingServiceServer
 // for forward compatibility
 type PingServiceServer interface {
-	PingServiceFunc(context.Context, *PingRequest) (*PingReply, error)
+	PingFunc(*PingRequestMessage, PingService_PingFuncServer) error
 	mustEmbedUnimplementedPingServiceServer()
 }
 
@@ -54,8 +77,8 @@ type PingServiceServer interface {
 type UnimplementedPingServiceServer struct {
 }
 
-func (UnimplementedPingServiceServer) PingServiceFunc(context.Context, *PingRequest) (*PingReply, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PingServiceFunc not implemented")
+func (UnimplementedPingServiceServer) PingFunc(*PingRequestMessage, PingService_PingFuncServer) error {
+	return status.Errorf(codes.Unimplemented, "method PingFunc not implemented")
 }
 func (UnimplementedPingServiceServer) mustEmbedUnimplementedPingServiceServer() {}
 
@@ -70,36 +93,40 @@ func RegisterPingServiceServer(s grpc.ServiceRegistrar, srv PingServiceServer) {
 	s.RegisterService(&PingService_ServiceDesc, srv)
 }
 
-func _PingService_PingServiceFunc_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PingRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _PingService_PingFunc_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(PingRequestMessage)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(PingServiceServer).PingServiceFunc(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/pingService/pingServiceFunc",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PingServiceServer).PingServiceFunc(ctx, req.(*PingRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(PingServiceServer).PingFunc(m, &pingServicePingFuncServer{stream})
+}
+
+type PingService_PingFuncServer interface {
+	Send(*PongReplyStream) error
+	grpc.ServerStream
+}
+
+type pingServicePingFuncServer struct {
+	grpc.ServerStream
+}
+
+func (x *pingServicePingFuncServer) Send(m *PongReplyStream) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 // PingService_ServiceDesc is the grpc.ServiceDesc for PingService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var PingService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "pingService",
+	ServiceName: "PingService",
 	HandlerType: (*PingServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "pingServiceFunc",
-			Handler:    _PingService_PingServiceFunc_Handler,
+			StreamName:    "PingFunc",
+			Handler:       _PingService_PingFunc_Handler,
+			ServerStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "message.proto",
 }
